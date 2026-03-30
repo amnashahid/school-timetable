@@ -2,18 +2,20 @@ import Link from "next/link";
 import { getAllClasses, getWeeklySchedule } from "./action";
 import { Button } from "@/components/ui/button";
 import { WEEK_DAYS, type TimetableEntry, type WeekDay } from "@/lib/timetable";
+import JoinClassButton from "@/components/JoinClassButton";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = {
   classId?: string;
   view?: "weekly" | "day";
+  dayMode?: string;
   day?: string;
 };
 
-function toValidDay(value: string | undefined) {
-  if (!value) return "Monday";
-  return WEEK_DAYS.includes(value as WeekDay) ? (value as WeekDay) : "Monday";
+function toValidDay(value: string | undefined, fallback: WeekDay) {
+  if (!value) return fallback;
+  return WEEK_DAYS.includes(value as WeekDay) ? (value as WeekDay) : fallback;
 }
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -81,20 +83,25 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
   const params = await searchParams;
   const classes = await getAllClasses();
 
+  function getDefaultSchoolDay(): WeekDay {
+    const today = DAY_NAMES[new Date().getDay()];
+    return WEEK_DAYS.includes(today as WeekDay) ? (today as WeekDay) : "Monday";
+  }
+
   const selectedClassId = params.classId ?? "";
-  const selectedView = params.view === "day" ? "day" : "weekly";
-  const selectedDay = toValidDay(params.day);
+  const selectedDayMode = params.dayMode === "on" || params.view === "day";
+  const selectedDay = toValidDay(params.day, getDefaultSchoolDay());
   const hasClassSelection = Boolean(selectedClassId);
   const canShowTable = hasClassSelection;
 
   // Table schedule (may be day-filtered)
   const schedule = canShowTable
-    ? await getWeeklySchedule([selectedClassId], selectedView === "day" ? selectedDay : "")
+    ? await getWeeklySchedule([selectedClassId], selectedDayMode ? selectedDay : "")
     : [];
 
   // Full weekly schedule for current/next detection (reuse if already weekly)
   const weeklySchedule =
-    canShowTable && selectedView === "day"
+    canShowTable && selectedDayMode
       ? await getWeeklySchedule([selectedClassId])
       : schedule;
 
@@ -126,9 +133,6 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <Button asChild variant="outline" className="w-full bg-white/80 sm:w-auto">
-                <Link href="/teacher">Teacher Dashboard</Link>
-              </Button>
-              <Button asChild variant="outline" className="w-full bg-white/80 sm:w-auto">
                 <Link href="/admin">Admin Dashboard</Link>
               </Button>
             </div>
@@ -151,24 +155,23 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
             </div>
 
             <div>
-              <label htmlFor="view" className="mb-2 block text-sm font-semibold text-slate-700">View</label>
-              <select
-                id="view"
-                name="view"
-                defaultValue={selectedView}
-                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
-              >
-                <option value="weekly">Whole Week</option>
-                <option value="day">Single Day</option>
-              </select>
+              <label htmlFor="dayMode" className="mb-2 block text-sm font-semibold text-slate-700">Day View Switch</label>
+              <label className="group flex h-11 cursor-pointer items-center justify-between rounded-xl border border-slate-300 bg-white px-3 shadow-sm">
+                <span className="text-sm text-slate-700">{selectedDayMode ? "Day view ON" : "Weekly view"}</span>
+                <input id="dayMode" name="dayMode" type="checkbox" value="on" defaultChecked={selectedDayMode} className="sr-only" />
+                <span className={`relative h-6 w-11 rounded-full transition-colors ${selectedDayMode ? "bg-cyan-500" : "bg-slate-300"}`}>
+                  <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${selectedDayMode ? "translate-x-5" : "translate-x-0"}`} />
+                </span>
+              </label>
             </div>
 
-            <div>
+            <div className={selectedDayMode ? "" : "opacity-60"}>
               <label htmlFor="day" className="mb-2 block text-sm font-semibold text-slate-700">Day (for day view)</label>
               <select
                 id="day"
                 name="day"
                 defaultValue={selectedDay}
+                disabled={!selectedDayMode}
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-slate-900 shadow-sm focus:border-cyan-500 focus:outline-none"
               >
                 {WEEK_DAYS.map((day) => (
@@ -215,15 +218,12 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
                       {currentClass.class_name ? (
                         <p className="mt-0.5 text-xs text-emerald-200">{currentClass.class_name}</p>
                       ) : null}
+                      {currentClass.zoom_id ? <p className="mt-2 text-xs text-emerald-100">Zoom ID: {currentClass.zoom_id}</p> : null}
+                      {currentClass.password ? <p className="text-xs text-emerald-100">Passcode: {currentClass.password}</p> : null}
                       {currentClass.link ? (
-                        <a
-                          href={currentClass.link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-1.5 text-sm font-bold text-emerald-700 shadow hover:bg-emerald-50"
-                        >
-                          Join Class →
-                        </a>
+                        <div className="mt-4 inline-block">
+                          <JoinClassButton link={currentClass.link} classLabel={currentClass.subject} />
+                        </div>
                       ) : null}
                     </div>
                   </div>
@@ -267,7 +267,7 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
             {/* Timetable table */}
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-gradient-to-r from-cyan-600 to-sky-600 px-4 py-4 text-white md:px-5">
-                <h2 className="text-lg font-bold md:text-xl">{selectedView === "day" ? `${selectedDay} Timetable` : "Weekly Timetable"}</h2>
+                <h2 className="text-lg font-bold md:text-xl">{selectedDayMode ? `${selectedDay} Timetable` : "Weekly Timetable"}</h2>
                 <p className="text-sm text-cyan-50">
                   {selectedClass?.name ?? "Selected class"}
                 </p>
@@ -317,14 +317,14 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
                           <div className="mt-3 space-y-1 text-xs text-slate-600">
                             <p>Class: {entry.class_name ?? selectedClass?.name ?? "-"}</p>
                             <p>Teacher: {entry.teacher_name ?? "-"}</p>
+                            {entry.zoom_id ? <p>Zoom ID: {entry.zoom_id}</p> : null}
+                            {entry.password ? <p>Passcode: {entry.password}</p> : null}
                             {entry.cancel_reason ? <p className="text-rose-600">Reason: {entry.cancel_reason}</p> : null}
                           </div>
 
                           <div className="mt-3">
                             {entry.link && isCurrent && !entry.is_cancelled ? (
-                              <Button asChild size="sm" className="w-full rounded-full bg-orange-500 hover:bg-orange-600">
-                                <a href={entry.link} target="_blank" rel="noreferrer">Join Class</a>
-                              </Button>
+                              <JoinClassButton link={entry.link} classLabel={`${entry.subject} (${entry.class_name ?? selectedClass?.name ?? "Class"})`} />
                             ) : (
                               <p className="text-xs text-slate-400">Join is available only during active class time.</p>
                             )}
@@ -343,6 +343,7 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
                           <th className="px-5 py-3">Subject</th>
                           <th className="px-5 py-3">Class</th>
                           <th className="px-5 py-3">Teacher</th>
+                          <th className="px-5 py-3">Zoom</th>
                           <th className="px-5 py-3">Status</th>
                           <th className="px-5 py-3 text-center">Action</th>
                         </tr>
@@ -381,6 +382,11 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
                               </td>
                               <td className="px-5 py-4 text-sm text-slate-700">{entry.class_name ?? selectedClass?.name ?? "-"}</td>
                               <td className="px-5 py-4 text-sm text-slate-700">{entry.teacher_name ?? "-"}</td>
+                              <td className="px-5 py-4 text-xs text-slate-600">
+                                {entry.zoom_id ? <div>ID: {entry.zoom_id}</div> : null}
+                                {entry.password ? <div>Pass: {entry.password}</div> : null}
+                                {!entry.zoom_id && !entry.password ? <span className="text-slate-400">No details</span> : null}
+                              </td>
                               <td className="px-5 py-4 text-sm">
                                 {entry.is_cancelled ? (
                                   <div>
@@ -393,9 +399,7 @@ export default async function SchoolHub({ searchParams }: { searchParams: Promis
                               </td>
                               <td className="px-5 py-4 text-center">
                                 {entry.link && isCurrent && !entry.is_cancelled ? (
-                                  <Button asChild size="sm" className="rounded-full bg-orange-500 px-5 hover:bg-orange-600">
-                                    <a href={entry.link} target="_blank" rel="noreferrer">Join Class</a>
-                                  </Button>
+                                  <JoinClassButton link={entry.link} classLabel={`${entry.subject} (${entry.class_name ?? selectedClass?.name ?? "Class"})`} />
                                 ) : (
                                   <span className="text-xs text-slate-400">Available only when class is active</span>
                                 )}

@@ -1,12 +1,56 @@
 "use server"
 import { createClient } from '@supabase/supabase-js'
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { WEEK_DAYS, type SchoolClass, type Subject, type Teacher, type TimetableEntry, type WeekDay } from "@/lib/timetable";
 
+const ADMIN_SESSION_COOKIE = "school_admin_session";
+
+function getAdminCredentials() {
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD?.trim();
+  return { email, password };
+}
+
+export async function loginAdmin(formData: FormData) {
+  const emailInput = String(formData.get("email") ?? "").trim().toLowerCase();
+  const passwordInput = String(formData.get("password") ?? "").trim();
+  const { email, password } = getAdminCredentials();
+
+  if (!email || !password) {
+    redirect("/admin/login?error=config");
+  }
+
+  if (!emailInput || !passwordInput) {
+    redirect("/admin/login?error=missing");
+  }
+
+  if (emailInput !== email || passwordInput !== password) {
+    redirect("/admin/login?error=invalid");
+  }
+
+  const cookieStore = await cookies();
+  cookieStore.set(ADMIN_SESSION_COOKIE, "authenticated", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 8,
+  });
+
+  redirect("/admin");
+}
+
+export async function logoutAdmin() {
+  const cookieStore = await cookies();
+  cookieStore.delete(ADMIN_SESSION_COOKIE);
+  redirect("/admin/login");
+}
+
 function getSupabaseClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL// || 'https://joomgmcwaymsnhfzhuuo.supabase.co';
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY //|| 'sb_publishable_wGvSSHyQzZVbkunj9P9gRw_PJQnzMGq';
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://joomgmcwaymsnhfzhuuo.supabase.co';
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_wGvSSHyQzZVbkunj9P9gRw_PJQnzMGq';
 
   if (!url || !anonKey) {
     return null;
@@ -35,36 +79,12 @@ function classNameFromRelation(value: unknown) {
   return row.name ?? null;
 }
 
-function adminPath(
-  menu: "teachers" | "classes" | "subjects" | "timetable",
-  statusKey: string,
-  statusValue: string,
-  reasonKey?: string,
-  reasonValue?: string,
-  extraParams?: Record<string, string | undefined>,
-) {
+function adminPath(menu: "teachers" | "classes" | "subjects" | "timetable", statusKey: string, statusValue: string, reasonKey?: string, reasonValue?: string) {
   const params = new URLSearchParams({ menu, [statusKey]: statusValue });
   if (reasonKey && reasonValue) {
     params.set(reasonKey, encodeURIComponent(reasonValue));
   }
-  if (extraParams) {
-    for (const [key, value] of Object.entries(extraParams)) {
-      if (value) params.set(key, value);
-    }
-  }
   return `/admin?${params.toString()}`;
-}
-
-function getTimetableFilterParams(formData: FormData) {
-  const classFilter = String(formData.get('classFilter') ?? '').trim();
-  const dayFilter = String(formData.get('dayFilter') ?? '').trim();
-  const teacherFilter = String(formData.get('teacherFilter') ?? '').trim();
-
-  return {
-    classFilter: classFilter || undefined,
-    dayFilter: dayFilter || undefined,
-    teacherFilter: teacherFilter || undefined,
-  };
 }
 
 export async function getAllTeachers() {
@@ -389,9 +409,8 @@ export async function deleteSubject(formData: FormData) {
 
 export async function updateTimetableEntry(formData: FormData) {
   const supabase = getSupabaseClient();
-  const filterParams = getTimetableFilterParams(formData);
   if (!supabase) {
-    redirect(adminPath("timetable", "scheduleStatus", "missing-config", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "scheduleStatus", "missing-config"));
   }
 
   const id = String(formData.get('id') ?? '').trim();
@@ -400,13 +419,12 @@ export async function updateTimetableEntry(formData: FormData) {
   const day = String(formData.get('day') ?? '').trim() as WeekDay;
   const subject = String(formData.get('subject') ?? '').trim();
   const startTime = String(formData.get('start_time') ?? '').trim();
-  const endTime = String(formData.get('end_time') ?? '').trim();
   const link = String(formData.get('link') ?? '').trim();
   const zoomId = String(formData.get('zoom_id') ?? '').trim();
   const password = String(formData.get('password') ?? '').trim();
 
-  if (!id || !classId || !subject || !startTime || !endTime || !WEEK_DAYS.includes(day)) {
-    redirect(adminPath("timetable", "scheduleStatus", "missing-fields", undefined, undefined, filterParams));
+  if (!id || !classId || !subject || !startTime || !WEEK_DAYS.includes(day)) {
+    redirect(adminPath("timetable", "scheduleStatus", "missing-fields"));
   }
 
   const { error } = await supabase
@@ -417,7 +435,6 @@ export async function updateTimetableEntry(formData: FormData) {
       day,
       subject,
       start_time: startTime,
-      end_time: endTime,
       link: link || null,
       zoom_id: zoomId || null,
       password: password || null,
@@ -425,45 +442,43 @@ export async function updateTimetableEntry(formData: FormData) {
     .eq('id', id);
 
   if (error) {
-    redirect(adminPath("timetable", "scheduleStatus", "error", "scheduleReason", error.message, filterParams));
+    redirect(adminPath("timetable", "scheduleStatus", "error", "scheduleReason", error.message));
   }
 
   revalidatePath('/');
   revalidatePath('/admin');
   revalidatePath('/admin/manage');
   revalidatePath('/teacher');
-  redirect(adminPath("timetable", "scheduleStatus", "updated", undefined, undefined, filterParams));
+  redirect(adminPath("timetable", "scheduleStatus", "updated"));
 }
 
 export async function deleteTimetableEntry(formData: FormData) {
   const supabase = getSupabaseClient();
-  const filterParams = getTimetableFilterParams(formData);
   if (!supabase) {
-    redirect(adminPath("timetable", "scheduleStatus", "missing-config", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "scheduleStatus", "missing-config"));
   }
 
   const id = String(formData.get('id') ?? '').trim();
   if (!id) {
-    redirect(adminPath("timetable", "scheduleStatus", "missing-fields", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "scheduleStatus", "missing-fields"));
   }
 
   const { error } = await supabase.from('timetable').delete().eq('id', id);
   if (error) {
-    redirect(adminPath("timetable", "scheduleStatus", "error", "scheduleReason", error.message, filterParams));
+    redirect(adminPath("timetable", "scheduleStatus", "error", "scheduleReason", error.message));
   }
 
   revalidatePath('/');
   revalidatePath('/admin');
   revalidatePath('/admin/manage');
   revalidatePath('/teacher');
-  redirect(adminPath("timetable", "scheduleStatus", "deleted", undefined, undefined, filterParams));
+  redirect(adminPath("timetable", "scheduleStatus", "deleted"));
 }
 
 export async function createTimetableEntry(formData: FormData) {
   const supabase = getSupabaseClient();
-  const filterParams = getTimetableFilterParams(formData);
   if (!supabase) {
-    redirect(adminPath("timetable", "scheduleStatus", "missing-config", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "scheduleStatus", "missing-config"));
   }
 
   const classId = String(formData.get('class_id') ?? '').trim();
@@ -471,13 +486,12 @@ export async function createTimetableEntry(formData: FormData) {
   const day = String(formData.get('day') ?? '').trim() as WeekDay;
   const subject = String(formData.get('subject') ?? '').trim();
   const startTime = String(formData.get('start_time') ?? '').trim();
-  const endTime = String(formData.get('end_time') ?? '').trim();
   const link = String(formData.get('link') ?? '').trim();
   const zoomId = String(formData.get('zoom_id') ?? '').trim();
   const password = String(formData.get('password') ?? '').trim();
 
-  if (!classId || !subject || !startTime || !endTime || !WEEK_DAYS.includes(day)) {
-    redirect(adminPath("timetable", "scheduleStatus", "missing-fields", undefined, undefined, filterParams));
+  if (!classId || !subject || !startTime || !WEEK_DAYS.includes(day)) {
+    redirect(adminPath("timetable", "scheduleStatus", "missing-fields"));
   }
 
   const { error } = await supabase.from('timetable').insert([
@@ -487,7 +501,6 @@ export async function createTimetableEntry(formData: FormData) {
       day,
       subject,
       start_time: startTime,
-      end_time: endTime,
       link: link || null,
       zoom_id: zoomId || null,
       password: password || null,
@@ -495,28 +508,27 @@ export async function createTimetableEntry(formData: FormData) {
   ]);
 
   if (error) {
-    redirect(adminPath("timetable", "scheduleStatus", "error", "scheduleReason", error.message, filterParams));
+    redirect(adminPath("timetable", "scheduleStatus", "error", "scheduleReason", error.message));
   }
 
   revalidatePath("/");
   revalidatePath('/teacher');
   revalidatePath('/admin');
   revalidatePath('/admin/manage');
-  redirect(adminPath("timetable", "scheduleStatus", "saved", undefined, undefined, filterParams));
+  redirect(adminPath("timetable", "scheduleStatus", "saved"));
 }
 
 export async function cancelTimetableEntry(formData: FormData) {
   const supabase = getSupabaseClient();
-  const filterParams = getTimetableFilterParams(formData);
   if (!supabase) {
-    redirect(adminPath("timetable", "cancelStatus", "missing-config", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "cancelStatus", "missing-config"));
   }
 
   const entryId = String(formData.get('entry_id') ?? '').trim();
   const cancelReason = String(formData.get('cancel_reason') ?? '').trim();
 
   if (!entryId) {
-    redirect(adminPath("timetable", "cancelStatus", "missing-fields", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "cancelStatus", "missing-fields"));
   }
 
   const { error } = await supabase
@@ -525,26 +537,25 @@ export async function cancelTimetableEntry(formData: FormData) {
     .eq('id', entryId);
 
   if (error) {
-    redirect(adminPath("timetable", "cancelStatus", "error", "cancelReason", error.message, filterParams));
+    redirect(adminPath("timetable", "cancelStatus", "error", "cancelReason", error.message));
   }
 
   revalidatePath('/');
   revalidatePath('/teacher');
   revalidatePath('/admin');
   revalidatePath('/admin/manage');
-  redirect(adminPath("timetable", "cancelStatus", "cancelled", undefined, undefined, filterParams));
+  redirect(adminPath("timetable", "cancelStatus", "cancelled"));
 }
 
 export async function resumeTimetableEntry(formData: FormData) {
   const supabase = getSupabaseClient();
-  const filterParams = getTimetableFilterParams(formData);
   if (!supabase) {
-    redirect(adminPath("timetable", "cancelStatus", "missing-config", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "cancelStatus", "missing-config"));
   }
 
   const entryId = String(formData.get('entry_id') ?? '').trim();
   if (!entryId) {
-    redirect(adminPath("timetable", "cancelStatus", "missing-fields", undefined, undefined, filterParams));
+    redirect(adminPath("timetable", "cancelStatus", "missing-fields"));
   }
 
   const { error } = await supabase
@@ -553,14 +564,14 @@ export async function resumeTimetableEntry(formData: FormData) {
     .eq('id', entryId);
 
   if (error) {
-    redirect(adminPath("timetable", "cancelStatus", "error", "cancelReason", error.message, filterParams));
+    redirect(adminPath("timetable", "cancelStatus", "error", "cancelReason", error.message));
   }
 
   revalidatePath('/');
   revalidatePath('/teacher');
   revalidatePath('/admin');
   revalidatePath('/admin/manage');
-  redirect(adminPath("timetable", "cancelStatus", "resumed", undefined, undefined, filterParams));
+  redirect(adminPath("timetable", "cancelStatus", "resumed"));
 }
 
 export async function addTeacherTimetableEntry(formData: FormData) {
@@ -579,12 +590,11 @@ export async function addTeacherTimetableEntry(formData: FormData) {
   const day = String(formData.get('day') ?? '').trim() as WeekDay;
   const subject = String(formData.get('subject') ?? '').trim();
   const startTime = String(formData.get('start_time') ?? '').trim();
-  const endTime = String(formData.get('end_time') ?? '').trim();
   const link = String(formData.get('link') ?? '').trim();
   const zoomId = String(formData.get('zoom_id') ?? '').trim();
   const password = String(formData.get('password') ?? '').trim();
 
-  if (!classId || !teacherId || !subject || !startTime || !endTime || !WEEK_DAYS.includes(day)) {
+  if (!classId || !teacherId || !subject || !startTime || !WEEK_DAYS.includes(day)) {
     teacherRedirect('missing-fields');
   }
 
@@ -594,7 +604,6 @@ export async function addTeacherTimetableEntry(formData: FormData) {
     day,
     subject,
     start_time: startTime,
-    end_time: endTime,
     link: link || null,
     zoom_id: zoomId || null,
     password: password || null,

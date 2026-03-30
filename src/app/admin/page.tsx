@@ -13,6 +13,7 @@ import {
   getAllSubjects,
   getAllTeachers,
   getWeeklySchedule,
+  logoutAdmin,
   resumeTimetableEntry,
   updateClass,
   updateSubject,
@@ -131,8 +132,10 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
               <h1 className="text-3xl font-heading font-black text-slate-900">Admin Dashboard</h1>
             </div>
             <div className="flex gap-2">
-              <Button asChild variant="outline" className="bg-white"><Link href="/teacher">Teacher View</Link></Button>
               <Button asChild variant="outline" className="bg-white"><Link href="/">Student View</Link></Button>
+              <form action={logoutAdmin}>
+                <Button type="submit" variant="outline" className="bg-white">Logout</Button>
+              </form>
             </div>
           </div>
 

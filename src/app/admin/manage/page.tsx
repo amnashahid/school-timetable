@@ -111,7 +111,6 @@ export default async function AdminManagePage({ searchParams }: { searchParams: 
             </div>
             <div className="flex gap-2">
               <Button asChild variant="outline"><Link href="/admin">Dashboard</Link></Button>
-              <Button asChild variant="outline"><Link href="/teacher">Teacher View</Link></Button>
               <Button asChild variant="outline"><Link href="/">Student View</Link></Button>
             </div>
           </div>
